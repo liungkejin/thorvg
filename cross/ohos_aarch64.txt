@@ -1,0 +1,24 @@
+# OpenHarmony developer (Use the NDK with other build systems)
+# https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/ndk-development-overview
+
+[binaries]
+c       = 'OHOS_SDK/native/llvm/bin/aarch64-unknown-linux-ohos-clang'
+cpp     = 'OHOS_SDK/native/llvm/bin/aarch64-unknown-linux-ohos-clang++'
+ar      = 'OHOS_SDK/native/llvm/bin/llvm-ar'
+as      = 'OHOS_SDK/native/llvm/bin/llvm-as'
+ranlib  = 'OHOS_SDK/native/llvm/bin/llvm-ranlib'
+ld      = 'OHOS_SDK/native/llvm/bin/ld.lld'
+strip   = 'OHOS_SDK/native/llvm/bin/llvm-strip'
+
+[properties]
+sys_root = 'OHOS_SDK/native/sysroot'
+
+[built-in options]
+c_args = ['--sysroot=OHOS_SDK/native/sysroot', '-IOHOS_SDK/native/sysroot/usr/include/', '-IOHOS_SDK/native/sysroot/usr/include/aarch64-linux-ohos', '-fdata-sections', '-ffunction-sections', '-funwind-tables', '-fstack-protector-strong', '-no-canonical-prefixes', '-fno-addrsig', '-Wa,--noexecstack']
+cpp_args = ['--sysroot=OHOS_SDK/native/sysroot', '-IOHOS_SDK/native/sysroot/usr/include/', '-IOHOS_SDK/native/sysroot/usr/include/aarch64-linux-ohos', '-fdata-sections', '-ffunction-sections', '-funwind-tables', '-fstack-protector-strong', '-no-canonical-prefixes', '-fno-addrsig', '-Wa,--noexecstack']
+
+[host_machine]
+system = 'linux'
+cpu_family = 'aarch64'
+cpu = 'aarch64'
+endian = 'little'
