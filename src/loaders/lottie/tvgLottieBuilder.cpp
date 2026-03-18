@@ -735,10 +735,12 @@ void LottieBuilder::updateRoundedCorner(TVG_UNUSED LottieGroup* parent, LottieOb
     auto r = roundedCorner->radius(frameNo, tween, exps);
     if (r < LottieRoundnessModifier::ROUNDNESS_EPSILON) return;
 
-    if (!ctx->roundness) ctx->roundness = new LottieRoundnessModifier(&buffer, r);
-    else if (ctx->roundness->r < r) ctx->roundness->r = r;
-
-    ctx->update(ctx->roundness);
+    if (ctx->roundness) {
+        if (ctx->roundness->r < r) ctx->roundness->r = r;
+    } else {
+        ctx->roundness = new LottieRoundnessModifier(&buffer, r);
+        ctx->update(ctx->roundness);
+    }
 }
 
 
@@ -913,6 +915,7 @@ void LottieBuilder::updateImage(LottieGroup* layer)
 
     auto image = static_cast<LottieImage*>(layer->children.first());
     auto picture = image->bitmap.picture;
+    if (!picture) return;
 
     //resolve an image asset if need
     if (resolver && !image->resolved) {

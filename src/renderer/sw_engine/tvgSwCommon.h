@@ -336,11 +336,56 @@ struct SwCellPool
 
 struct SwMpool
 {
-    SwOutline* outline;
-    SwStrokeBorder* leftBorder;
-    SwStrokeBorder* rightBorder;
-    SwCellPool* cellPool;
-    unsigned allocSize;
+    SwOutline* outlines;
+    SwStrokeBorder* lBorders;
+    SwStrokeBorder* rBorders;
+    SwCellPool* cellPools;
+
+    SwMpool(uint32_t threads)
+    {
+        auto allocSize = threads + 1;
+        outlines = new SwOutline[allocSize];
+        lBorders = new SwStrokeBorder[allocSize];
+        rBorders = new SwStrokeBorder[allocSize];
+        cellPools = new SwCellPool[allocSize];
+    }
+
+    ~SwMpool()
+    {
+        delete[] (outlines);
+        delete[] (lBorders);
+        delete[] (rBorders);
+        delete[] (cellPools);
+    }
+
+    SwCellPool* cell(unsigned idx)
+    {
+        return &cellPools[idx];
+    }
+
+    SwOutline* outline(unsigned idx)
+    {
+        outlines[idx].pts.clear();
+        outlines[idx].cntrs.clear();
+        outlines[idx].types.clear();
+        outlines[idx].closed.clear();
+
+        return &outlines[idx];
+    }
+
+    SwStrokeBorder* strokeLBorder(unsigned idx)
+    {
+        lBorders[idx].pts.clear();
+        lBorders[idx].start = -1;
+        return &lBorders[idx];
+    }
+
+    SwStrokeBorder* strokeRBorder(unsigned idx)
+    {
+        rBorders[idx].pts.clear();
+        rBorders[idx].start = -1;
+        return &rBorders[idx];
+    }
 };
 
 static inline int32_t TO_SWCOORD(float val)
@@ -693,13 +738,9 @@ bool rleClip(SwRle* rle, const SwRle* clip);
 bool rleClip(SwRle* rle, const RenderRegion* clip);
 bool rleIntersect(const SwRle* rle, const RenderRegion& region);
 
-SwMpool* mpoolInit(uint32_t threads);
-void mpoolTerm(SwMpool* mpool);
-SwOutline* mpoolReqOutline(SwMpool* mpool, unsigned idx);
-SwOutline* mpoolReqDashOutline(SwMpool* mpool, unsigned idx);
-SwStrokeBorder* mpoolReqStrokeLBorder(SwMpool* mpool, unsigned idx);
-SwStrokeBorder* mpoolReqStrokeRBorder(SwMpool* mpool, unsigned idx);
-SwCellPool* mpoolReqCellPool(SwMpool* mpool, unsigned idx);
+void mpoolInit(uint32_t threads);
+void mpoolTerm();
+SwMpool* mpoolReq();
 
 bool rasterCompositor(SwSurface* surface);
 bool rasterShape(SwSurface* surface, SwShape* shape, const RenderRegion& bbox, RenderColor& c);
