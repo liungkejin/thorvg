@@ -39,6 +39,33 @@
 static int32_t _rendererCnt = -1;
 static mutex _rendererMtx;
 static thread_local Array<GlProgram*> _programs;
+static thread_local Array<GlRenderTargetPool*> _globalComposePool;
+static thread_local Array<GlRenderTargetPool*> _globalBlendPool;
+
+static GlRenderTargetPool* getGlobalRenderTargetPool(Array<GlRenderTargetPool*>& pools, uint32_t index, uint32_t width, uint32_t height)
+{
+    if (pools.count > 0) {
+        GlRenderTargetPool* tp = pools[0];
+        if (tp->getMaxWidth() != width || tp->getMaxHeight() != height) {
+            ARRAY_FOREACH(p, pools) delete(*p);
+            pools.clear();
+        }
+    }
+    while (pools.count <= index) {
+        pools.push(new GlRenderTargetPool(width, height));
+    }
+    return pools[index];
+}
+
+static GlRenderTargetPool* getGlobalComposePool(uint32_t index, uint32_t width, uint32_t height)
+{
+    return getGlobalRenderTargetPool(_globalComposePool, index, width, height);
+}
+
+static GlRenderTargetPool* getGlobalBlendPool(uint32_t index, uint32_t width, uint32_t height)
+{
+    return getGlobalRenderTargetPool(_globalBlendPool, index, width, height);
+}
 
 void GlRenderer::clearDisposes()
 {
@@ -59,10 +86,7 @@ void GlRenderer::flush()
 
     mRootTarget.reset();
 
-    ARRAY_FOREACH(p, mComposePool) delete(*p);
     mComposePool.clear();
-
-    ARRAY_FOREACH(p, mBlendPool) delete(*p);
     mBlendPool.clear();
 
     ARRAY_FOREACH(p, mComposeStack) delete(*p);
@@ -189,7 +213,7 @@ GlRenderTask* GlRenderer::createPrimitiveTask(RenderTypes type, BlendSource sour
 
     if (mBlendMethod == BlendMethod::Normal) return new GlRenderTask(_programs[type]);
 
-    if (mBlendPool.empty()) mBlendPool.push(new GlRenderTargetPool(surface.w, surface.h));
+    if (mBlendPool.empty()) mBlendPool.push(getGlobalBlendPool(0, surface.w, surface.h));
 #if defined(THORVG_GL_TARGET_GL)
     dstCopyFbo = mBlendPool[0]->getRenderTarget(viewRegion);
 #else  // TODO: create partial buffer when MSAA is disabled
@@ -524,7 +548,7 @@ bool GlRenderer::beginComplexBlending(const RenderRegion& vp, RenderRegion bound
 
     if (mBlendMethod == BlendMethod::Normal) return false;
 
-    if (mBlendPool.empty()) mBlendPool.push(new GlRenderTargetPool(surface.w, surface.h));
+    if (mBlendPool.empty()) mBlendPool.push(getGlobalBlendPool(0, surface.w, surface.h));
 
     auto blendFbo = mBlendPool[0]->getRenderTarget(bounds);
 
@@ -543,7 +567,8 @@ void GlRenderer::endBlendingCompose(GlRenderTask* stencilTask)
     auto composeTask = blendPass->endRenderPass<GlComposeTask>(nullptr, currentPass()->getFboId());
 
     const auto& vp = blendPass->getViewport();
-    if (mBlendPool.count < 2) mBlendPool.push(new GlRenderTargetPool(surface.w, surface.h));
+    if (mBlendPool.count < 1) mBlendPool.push(getGlobalBlendPool(0, surface.w, surface.h));
+    if (mBlendPool.count < 2) mBlendPool.push(getGlobalBlendPool(1, surface.w, surface.h));
 #if defined(THORVG_GL_TARGET_GL)
     auto dstCopyFbo = mBlendPool[1]->getRenderTarget(vp);
 #else // TODO: create partial buffer when MSAA is disabled        
@@ -807,8 +832,8 @@ void GlRenderer::endRenderPass(RenderCompositor* cmp)
         mRenderPassStack.pop();
 
         if (!renderPass->isEmpty()) {
-            if (mBlendPool.count < 1) mBlendPool.push(new GlRenderTargetPool(surface.w, surface.h));
-            if (mBlendPool.count < 2) mBlendPool.push(new GlRenderTargetPool(surface.w, surface.h));
+            if (mBlendPool.count < 1) mBlendPool.push(getGlobalBlendPool(0, surface.w, surface.h));
+            if (mBlendPool.count < 2) mBlendPool.push(getGlobalBlendPool(1, surface.w, surface.h));
 #if defined(THORVG_GL_TARGET_GL)
             auto dstCopyFbo = mBlendPool[1]->getRenderTarget(renderPass->getViewport());
 #else // TODO: create partial buffer when MSAA is disabled
@@ -1043,7 +1068,7 @@ bool GlRenderer::beginComposite(RenderCompositor* cmp, MaskMethod method, uint8_
     glCmp->blendMethod = mBlendMethod;
 
     uint32_t index = mRenderPassStack.count - 1;
-    if (index >= mComposePool.count) mComposePool.push( new GlRenderTargetPool(surface.w, surface.h));
+    if (index >= mComposePool.count) mComposePool.push(getGlobalComposePool(index, surface.w, surface.h));
     
     if (glCmp->bbox.valid()) mRenderPassStack.push(new GlRenderPass(mComposePool[index]->getRenderTarget(glCmp->bbox)));
     else mRenderPassStack.push(new GlRenderPass(nullptr));
@@ -1074,8 +1099,8 @@ bool GlRenderer::endComposite(RenderCompositor* cmp)
 void GlRenderer::prepare(RenderEffect* effect, const Matrix& transform)
 {
     // we must be sure, that we have intermediate FBOs
-    if (mBlendPool.count < 1) mBlendPool.push(new GlRenderTargetPool(surface.w, surface.h));
-    if (mBlendPool.count < 2) mBlendPool.push(new GlRenderTargetPool(surface.w, surface.h));
+    if (mBlendPool.count < 1) mBlendPool.push(getGlobalBlendPool(0, surface.w, surface.h));
+    if (mBlendPool.count < 2) mBlendPool.push(getGlobalBlendPool(1, surface.w, surface.h));
 
     mEffect.update(effect, transform);
 }
@@ -1404,6 +1429,12 @@ bool GlRenderer::term()
 
     ARRAY_FOREACH(p, _programs) delete(*p);
     _programs.clear();
+
+    ARRAY_FOREACH(p, _globalComposePool) delete(*p);
+    _globalComposePool.clear();
+
+    ARRAY_FOREACH(p, _globalBlendPool) delete(*p);
+    _globalBlendPool.clear();
 
     glTerm();
 

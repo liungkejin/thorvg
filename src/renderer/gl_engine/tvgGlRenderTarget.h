@@ -50,6 +50,8 @@ struct GlRenderTargetPool
     GlRenderTargetPool(uint32_t maxWidth, uint32_t maxHeight);
     ~GlRenderTargetPool();
     GlRenderTarget* getRenderTarget(const RenderRegion& vp, GLuint resolveId = 0, int msaaSamples = 0);
+    uint32_t getMaxWidth() const { return maxWidth; }
+    uint32_t getMaxHeight() const { return maxHeight; }
 private:
     uint32_t maxWidth = 0;
     uint32_t maxHeight = 0;
