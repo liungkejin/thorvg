@@ -100,7 +100,10 @@ build_for_android() {
   esac
   local host_tag="${host_os_tag}-${host_arch_tag}"
   if [[ ! -d "$ndk/toolchains/llvm/prebuilt/$host_tag" ]]; then
-    myexit 1 "NDK host toolchain for '$host_tag' not found under $ndk/toolchains/llvm/prebuilt/"
+    host_tag="$(ls $ndk/toolchains/llvm/prebuilt/ | head -n 1)"
+    if [[ -z "$host_tag" ]]; then
+      myexit 1 "NDK host toolchain for '${host_os_tag}-${host_arch_tag}' not found under $ndk/toolchains/llvm/prebuilt/"
+    fi
   fi
 
   local cross_file="/tmp/.thorvg_android_cross_aarch64.txt"
