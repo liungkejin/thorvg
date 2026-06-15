@@ -165,7 +165,7 @@ struct GlRenderer : RenderMethod
     bool clear() override;
     bool intersectsShape(RenderData data, const RenderRegion& region) override;
     bool intersectsImage(RenderData data, const RenderRegion& region) override;
-    Result target(void* display, void* surface, void* context, int32_t id, uint32_t w, uint32_t h, ColorSpace cs);
+    Result target(void* display, void* surface, void* context, int32_t id, uint32_t w, uint32_t h, ColorSpace cs, int msaaSamples);
 
     //composition
     RenderCompositor* target(const RenderRegion& region, ColorSpace cs, CompositionFlag flags) override;
@@ -183,6 +183,7 @@ struct GlRenderer : RenderMethod
     bool partial(bool disable) override;
 
     static GlRenderer* gen(uint32_t threads, EngineOption op);
+    static GlProgram* program(RenderTypes type);
     static bool term();
 
 private:
@@ -192,7 +193,9 @@ private:
     GlRenderer(); 
     ~GlRenderer();
 
-    void initShaders();
+    // Static because shader programs are cached globally (thread_local _programs),
+    // shared across all GlRenderer instances on the same thread.
+    static void initShaders();
     static RenderRegion viewportRegion(const RenderRegion& vp, const RenderRegion& bbox);
     GlRenderTask* createPrimitiveTask(RenderTypes type, BlendSource source, const RenderRegion& viewRegion, GlRenderTarget*& dstCopyFbo);
     void bindBlendTarget(GlRenderTask* task, const GlRenderTarget* dstCopyFbo, const RenderRegion& viewRegion, uint32_t binding);
@@ -223,7 +226,6 @@ private:
     GlStageBuffer mGpuBuffer;
     GlRenderTarget mRootTarget;
     GlEffect mEffect;
-    Array<GlProgram*> mPrograms;
 
     Array<GlRenderTargetPool*> mComposePool;
     Array<GlRenderTargetPool*> mBlendPool;

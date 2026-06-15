@@ -105,6 +105,9 @@ static tvg::Loader* _find(FileType type)
 #endif
             break;
         }
+#if defined(THORVG_GL_TARGET_GL) || defined(THORVG_GL_TARGET_GLES)
+        case FileType::Texture:
+#endif
         case FileType::Raw: {
             return new RawLoader;
             break;
@@ -184,6 +187,9 @@ static FileType _convert(const char* mimeType)
     else if (!strcmp(mimeType, "png")) type = FileType::Png;
     else if (!strcmp(mimeType, "jpg") || !strcmp(mimeType, "jpeg")) type = FileType::Jpg;
     else if (!strcmp(mimeType, "webp")) type = FileType::Webp;
+#if defined(THORVG_GL_TARGET_GL) || defined(THORVG_GL_TARGET_GLES)
+    else if (!strcmp(mimeType, "texture")) type = FileType::Texture;
+#endif
     else TVGLOG("RENDERER", "Given mimetype is unknown = \"%s\".", mimeType);
 
     return type;
@@ -223,6 +229,26 @@ static tvg::Loader* _findFromCache(const char* data, uint32_t size, const char* 
     }
     return nullptr;
 }
+
+#if defined(THORVG_GL_TARGET_GL) || defined(THORVG_GL_TARGET_GLES)
+static tvg::Loader* _findFromCache(const uint32_t textureId)
+{
+    auto type = FileType::Texture;
+
+    auto key = textureId;
+
+    ScopedLock lock(_key);
+
+    INLIST_FOREACH(_activeLoaders, loader) {
+        if (loader->type == type && loader->hashkey == key) {
+            ++loader->sharing;
+            return loader;
+        }
+    }
+    return nullptr;
+}
+#endif
+
 
 /************************************************************************/
 /* External Class Implementation                                        */
@@ -358,6 +384,23 @@ tvg::Loader* LoaderMgr::loader(const uint32_t* data, uint32_t w, uint32_t h, Col
     delete (loader);
     return nullptr;
 }
+
+#if defined(THORVG_GL_TARGET_GL) || defined(THORVG_GL_TARGET_GLES)
+tvg::Loader* LoaderMgr::loader(uint32_t textureId, uint32_t w, uint32_t h, ColorSpace cs)
+{
+    if (auto loader = _findFromCache(textureId)) return loader;
+
+    auto loader = new RawLoader(FileType::Texture);
+    if (loader->open(textureId, w, h, cs)) {
+        loader->cache(textureId);
+        ScopedLock lock(_key);
+        _activeLoaders.back(loader);
+        return loader;
+    }
+    delete(loader);
+    return nullptr;
+}
+#endif
 
 // loads fonts from memory - loader is cached (regardless of copy value) in order to access it while setting font
 tvg::Loader* LoaderMgr::loader(const char* name, const char* data, uint32_t size, TVG_UNUSED const char* mimeType, const LoaderOps* ops, bool copy)

@@ -113,6 +113,7 @@ enum struct ColorSpace : uint8_t
     ABGR8888S,     ///< The channels are joined in the order: alpha, blue, green, red. Colors are un-alpha-premultiplied. @since 0.12
     ARGB8888S,     ///< The channels are joined in the order: alpha, red, green, blue. Colors are un-alpha-premultiplied. @since 0.12
     Grayscale8,    ///< Single channel, 1 byte per pixel 8-bit grayscale.
+    TextureRGBA,   ///< Externally created OpenGL texture id. The caller owns the texture; ThorVG will not delete it. @since 1.1
     Unknown = 255  ///< Unknown channel data. This is reserved for an initial ColorSpace value. @since 1.0
 };
 
@@ -1651,6 +1652,26 @@ struct TVG_API Picture : Paint
     Result load(const char* data, uint32_t size, const char* mimeType, const char* rpath = nullptr, bool copy = false) noexcept;
 
     /**
+     * @brief Loads a picture from an existing OpenGL texture id.
+     *
+     * This function allows using an externally created GL texture as a picture source,
+     * avoiding an extra texture upload. The texture must be a 2D RGBA texture.
+     *
+     * @param[in] textureId The OpenGL texture id of the picture. The caller retains
+     *            ownership of the texture and is responsible for its lifecycle.
+     *            ThorVG will not delete this texture.
+     * @param[in] width The width of the picture in pixels.
+     * @param[in] height The height of the picture in pixels.
+     *
+     * @retval Result::InvalidArguments In case @p textureId is 0 or dimensions are invalid.
+     * @retval Result::InsufficientCondition If a vector/bitmap asset has already been loaded.
+     * @retval Result::NonSupport If the GL engine is not enabled.
+     *
+     * @since 1.1
+     */
+    Result load(uint32_t textureId, uint32_t width, uint32_t height) noexcept;
+
+    /**
      * @brief Resizes the picture content to the given width and height.
      *
      * The picture content is resized while keeping the default size aspect ratio.
@@ -2396,6 +2417,7 @@ struct TVG_API GlCanvas final : Canvas
      * @param[in] w The width (in pixels) of the raster image.
      * @param[in] h The height (in pixels) of the raster image.
      * @param[in] cs Specifies how the pixel values should be interpreted. Currently, it only allows @c ColorSpace::ABGR8888S as @c GL_RGBA8.
+     * @param[in] msaaSamples MSAA Samples
      *
      * @retval Result::InsufficientCondition If the canvas is currently rendering.
      *         Ensure that @ref Canvas::sync() has been called before setting a new target.
@@ -2408,7 +2430,28 @@ struct TVG_API GlCanvas final : Canvas
      *
      * @since 1.0
     */
-    Result target(void* display, void* surface, void* context, int32_t id, uint32_t w, uint32_t h, ColorSpace cs) noexcept;
+    Result target(void* display, void* surface, void* context, int32_t id, uint32_t w, uint32_t h, ColorSpace cs, int msaaSamples = 4) noexcept;
+
+    /**
+     * @brief Sets the drawing target for rasterization using an FBO id.
+     *
+     * This is a convenience overload that targets a specific framebuffer object (FBO).
+     * It is equivalent to calling target(nullptr, nullptr, nullptr, fboId, w, h, ColorSpace::ABGR8888S, msaaSamples).
+     *
+     * This function must be executed in a thread with a current GL context.
+     *
+     * @param[in] fboId The GL target framebuffer object id. A value of @c 0 specifies the main surface.
+     * @param[in] w The width (in pixels) of the raster image.
+     * @param[in] h The height (in pixels) of the raster image.
+     * @param[in] msaaSamples The number of MSAA samples (0 disables MSAA, 2 or 4 enables it).
+     *
+     * @retval Result::InsufficientCondition If the canvas is currently rendering.
+     *         Ensure that @ref Canvas::sync() has been called before setting a new target.
+     * @retval Result::NonSupport In case the gl engine is not supported.
+     *
+     * @since 1.0.3
+     */
+    Result target(int32_t fboId, uint32_t w, uint32_t h, int msaaSamples) noexcept;
 
     /**
      * @brief Creates a new OpenGL/ES Canvas object with optional rendering engine settings.

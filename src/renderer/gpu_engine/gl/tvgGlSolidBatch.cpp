@@ -59,7 +59,7 @@ bool GlSolidBatch::appendable(const GlRenderer& renderer, const GlRenderPass* pa
     // A new current pass is a hard batch boundary; fail before touching the old pass/task pair.
     if (this->pass != pass) return false;
     if (pass->lastTask() != task) return false;
-    if (task->getProgram() != renderer.mPrograms[GlRenderer::RT_Color]) return false;
+    if (task->getProgram() != GlRenderer::program(GlRenderer::RT_Color)) return false;
     if (!(this->viewBounds == viewBounds)) return false;
     return true;
 }
@@ -87,7 +87,7 @@ void GlSolidBatch::buildIndices(uint32_t* out, const GlGeometryBuffer* src, uint
 
 void GlSolidBatch::emitSingle(GlRenderer& renderer, GlRenderPass* pass, GlShape& sdata, const RenderColor& color, int32_t depth, const RenderRegion& viewRegion, const RenderRegion& viewBounds, uint32_t vertexCount, uint32_t indexCount)
 {
-    auto drawTask = new GlRenderTask(renderer.mPrograms[GlRenderer::RT_Color]);
+    auto drawTask = new GlRenderTask(GlRenderer::program(GlRenderer::RT_Color));
     drawTask->setViewMatrix(pass->getViewMatrix());
     drawTask->setDrawDepth(depth);
     sdata.geometry.draw(drawTask, &renderer.mGpuBuffer, RenderUpdateFlag::Color);
