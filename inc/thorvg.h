@@ -113,6 +113,7 @@ enum struct ColorSpace : uint8_t
     ABGR8888S,         ///< The channels are joined in the order: alpha, blue, green, red. Colors are un-alpha-premultiplied. @since 0.12
     ARGB8888S,         ///< The channels are joined in the order: alpha, red, green, blue. Colors are un-alpha-premultiplied. @since 0.12
     Grayscale8,        ///< One single channel data.
+    TextureRGBA,       ///< Opengl texture data
     Unknown = 255      ///< Unknown channel data. This is reserved for an initial ColorSpace value. @since 1.0
 };
 
@@ -1622,6 +1623,15 @@ struct TVG_API Picture : Paint
     Result load(const char* data, uint32_t size, const char* mimeType, const char* rpath = nullptr, bool copy = false) noexcept;
 
     /**
+     * @brief Loads a picture data from a texture id.
+     *
+     * @param textureId The texture id of the picture.
+     * @param width The width of the picture in pixels.
+     * @param height The height of the picture in pixels.
+     */
+    Result load(uint32_t textureId, uint32_t width, uint32_t height) noexcept;
+
+    /**
      * @brief Resizes the picture content to the given width and height.
      *
      * The picture content is resized while keeping the default size aspect ratio.
@@ -2346,6 +2356,7 @@ struct TVG_API GlCanvas final : Canvas
      * @param[in] w The width (in pixels) of the raster image.
      * @param[in] h The height (in pixels) of the raster image.
      * @param[in] cs Specifies how the pixel values should be interpreted. Currently, it only allows @c ColorSpace::ABGR8888S as @c GL_RGBA8.
+     * @param[in] msaaSamples MSAA Samples
      *
      * @retval Result::InsufficientCondition If the canvas is currently rendering.
      *         Ensure that @ref Canvas::sync() has been called before setting a new target.
@@ -2358,7 +2369,28 @@ struct TVG_API GlCanvas final : Canvas
      *
      * @since 1.0
     */
-    Result target(void* display, void* surface, void* context, int32_t id, uint32_t w, uint32_t h, ColorSpace cs) noexcept;
+    Result target(void* display, void* surface, void* context, int32_t id, uint32_t w, uint32_t h, ColorSpace cs, int msaaSamples = 4) noexcept;
+
+    /**
+     * @brief Sets the drawing target for rasterization.
+     *
+     * This function specifies the drawing target where the rasterization will occur. It can target
+     * a specific framebuffer object (FBO)
+     *
+     * This function must be executed in a thread with a GL context.
+     *
+     * @param[in] fboId The GL target ID (Fbo)
+     * @param[in] w The width (in pixels) of the raster image.
+     * @param[in] h The height (in pixels) of the raster image.
+     * @param[in] msaaSamples MSAA Samples 0/2/4
+     *
+     * @retval Result::InsufficientCondition If the canvas is currently rendering.
+     *         Ensure that @ref Canvas::sync() has been called before setting a new target.
+     * @retval Result::NonSupport In case the gl engine is not supported.
+     *
+     * @since 1.0.3
+     */
+    Result target(int32_t fboId, uint32_t w, uint32_t h, int msaaSamples) noexcept;
 
     /**
      * @brief Creates a new OpenGL/ES Canvas object with optional rendering engine settings.

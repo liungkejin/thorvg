@@ -37,6 +37,34 @@
 
 static int32_t _rendererCnt = -1;
 static mutex _rendererMtx;
+static thread_local Array<GlProgram*> _programs;
+static thread_local Array<GlRenderTargetPool*> _globalComposePool;
+static thread_local Array<GlRenderTargetPool*> _globalBlendPool;
+
+static GlRenderTargetPool* getGlobalRenderTargetPool(Array<GlRenderTargetPool*>& pools, uint32_t index, uint32_t width, uint32_t height)
+{
+    if (pools.count > 0) {
+        GlRenderTargetPool* tp = pools[0];
+        if (tp->getMaxWidth() != width || tp->getMaxHeight() != height) {
+            ARRAY_FOREACH(p, pools) delete(*p);
+            pools.clear();
+        }
+    }
+    while (pools.count <= index) {
+        pools.push(new GlRenderTargetPool(width, height));
+    }
+    return pools[index];
+}
+
+static GlRenderTargetPool* getGlobalComposePool(uint32_t index, uint32_t width, uint32_t height)
+{
+    return getGlobalRenderTargetPool(_globalComposePool, index, width, height);
+}
+
+static GlRenderTargetPool* getGlobalBlendPool(uint32_t index, uint32_t width, uint32_t height)
+{
+    return getGlobalRenderTargetPool(_globalBlendPool, index, width, height);
+}
 
 static constexpr float IDENTITY_VERTEX[] = {-1.f, 1.f, -1.f, -1.f, 1.f, 1.f, 1.f, -1.f};
 static constexpr uint32_t RECT_INDEX[] = {0, 1, 2, 2, 1, 3};
@@ -69,10 +97,7 @@ void GlRenderer::flush()
 
     mRootTarget.reset();
 
-    ARRAY_FOREACH(p, mComposePool) delete(*p);
     mComposePool.clear();
-
-    ARRAY_FOREACH(p, mBlendPool) delete(*p);
     mBlendPool.clear();
 
     ARRAY_FOREACH(p, mComposeStack) delete(*p);
@@ -89,9 +114,16 @@ bool GlRenderer::currentContext()
 #elif defined(_WIN32) && !defined(__CYGWIN__) && defined(THORVG_GL_TARGET_GL)
     if (tvgWglGetCurrentContext() == static_cast<HGLRC>(mContext)) return true;
     return (bool) tvgWglMakeCurrent((HDC)mSurface, static_cast<HGLRC>(mContext));
+#elif defined(__APPLE__) || defined(__ANDROID__) || defined(__OHOS__)
+    // ignore context, user manage context
+    return true;
 #elif defined(THORVG_GL_TARGET_GLES)
-    if (tvgEglGetCurrentContext() == static_cast<EGLContext>(mContext)) return true;
-    if (mDisplay && mSurface) return (bool) tvgEglMakeCurrent((EGLDisplay)mDisplay, (EGLSurface)mSurface, (EGLSurface)mSurface, (EGLContext)mContext);
+    if (tvgEglGetCurrentContext && tvgEglMakeCurrent) {
+        if (tvgEglGetCurrentContext() == static_cast<EGLContext>(mContext)) return true;
+        if (mDisplay && mSurface) return (bool) tvgEglMakeCurrent((EGLDisplay)mDisplay, (EGLSurface)mSurface, (EGLSurface)mSurface, (EGLContext)mContext);
+    }
+    // ignore context
+    return true;
 #endif
     TVGLOG("GL_ENGINE", "Maybe missing currentContext()?");
     return true;
@@ -109,8 +141,6 @@ GlRenderer::~GlRenderer()
     flush();
     mTextures.clear();
 
-    ARRAY_FOREACH(p, mPrograms) delete(*p);
-
     _rendererMtx.lock();
     --_rendererCnt;
     _rendererMtx.unlock();
@@ -119,7 +149,9 @@ GlRenderer::~GlRenderer()
 
 void GlRenderer::initShaders()
 {
-    mPrograms.reserve((int)RT_None);
+    if (!_programs.empty()) return; // already inited
+
+    _programs.reserve((int)RT_None);
 
 #if 1  //for optimization
     #define LINEAR_TOTAL_LENGTH 2831
@@ -150,31 +182,31 @@ void GlRenderer::initShaders()
         STR_RADIAL_GRADIENT_MAIN
     );
 
-    mPrograms.push(new GlProgram(COLOR_VERT_SHADER, COLOR_FRAG_SHADER));
-    mPrograms.push(new GlProgram(GRADIENT_VERT_SHADER, linearGradientFragShader));
-    mPrograms.push(new GlProgram(GRADIENT_VERT_SHADER, radialGradientFragShader));
-    mPrograms.push(new GlProgram(IMAGE_VERT_SHADER, IMAGE_FRAG_SHADER));
+    _programs.push(new GlProgram(COLOR_VERT_SHADER, COLOR_FRAG_SHADER));
+    _programs.push(new GlProgram(GRADIENT_VERT_SHADER, linearGradientFragShader));
+    _programs.push(new GlProgram(GRADIENT_VERT_SHADER, radialGradientFragShader));
+    _programs.push(new GlProgram(IMAGE_VERT_SHADER, IMAGE_FRAG_SHADER));
 
     // compose Renderer
-    mPrograms.push(new GlProgram(MASK_VERT_SHADER, MASK_ALPHA_FRAG_SHADER));
-    mPrograms.push(new GlProgram(MASK_VERT_SHADER, MASK_INV_ALPHA_FRAG_SHADER));
-    mPrograms.push(new GlProgram(MASK_VERT_SHADER, MASK_LUMA_FRAG_SHADER));
-    mPrograms.push(new GlProgram(MASK_VERT_SHADER, MASK_INV_LUMA_FRAG_SHADER));
-    mPrograms.push(new GlProgram(MASK_VERT_SHADER, MASK_ADD_FRAG_SHADER));
-    mPrograms.push(new GlProgram(MASK_VERT_SHADER, MASK_SUB_FRAG_SHADER));
-    mPrograms.push(new GlProgram(MASK_VERT_SHADER, MASK_INTERSECT_FRAG_SHADER));
-    mPrograms.push(new GlProgram(MASK_VERT_SHADER, MASK_DIFF_FRAG_SHADER));
-    mPrograms.push(new GlProgram(MASK_VERT_SHADER, MASK_LIGHTEN_FRAG_SHADER));
-    mPrograms.push(new GlProgram(MASK_VERT_SHADER, MASK_DARKEN_FRAG_SHADER));
+    _programs.push(new GlProgram(MASK_VERT_SHADER, MASK_ALPHA_FRAG_SHADER));
+    _programs.push(new GlProgram(MASK_VERT_SHADER, MASK_INV_ALPHA_FRAG_SHADER));
+    _programs.push(new GlProgram(MASK_VERT_SHADER, MASK_LUMA_FRAG_SHADER));
+    _programs.push(new GlProgram(MASK_VERT_SHADER, MASK_INV_LUMA_FRAG_SHADER));
+    _programs.push(new GlProgram(MASK_VERT_SHADER, MASK_ADD_FRAG_SHADER));
+    _programs.push(new GlProgram(MASK_VERT_SHADER, MASK_SUB_FRAG_SHADER));
+    _programs.push(new GlProgram(MASK_VERT_SHADER, MASK_INTERSECT_FRAG_SHADER));
+    _programs.push(new GlProgram(MASK_VERT_SHADER, MASK_DIFF_FRAG_SHADER));
+    _programs.push(new GlProgram(MASK_VERT_SHADER, MASK_LIGHTEN_FRAG_SHADER));
+    _programs.push(new GlProgram(MASK_VERT_SHADER, MASK_DARKEN_FRAG_SHADER));
 
     // stencil Renderer
-    mPrograms.push(new GlProgram(STENCIL_VERT_SHADER, STENCIL_FRAG_SHADER));
+    _programs.push(new GlProgram(STENCIL_VERT_SHADER, STENCIL_FRAG_SHADER));
 
     // blit Renderer
-    mPrograms.push(new GlProgram(BLIT_VERT_SHADER, BLIT_FRAG_SHADER));
+    _programs.push(new GlProgram(BLIT_VERT_SHADER, BLIT_FRAG_SHADER));
 
     // blend programs: image (17) + scene (17) + shape solid (17) + shape linear (17) + shape radial (17)
-    for (uint32_t i = 0; i < 85; ++i) mPrograms.push(nullptr);
+    for (uint32_t i = 0; i < 85; ++i) _programs.push(nullptr);
 }
 
 RenderRegion GlRenderer::viewportRegion(const RenderRegion& vp, const RenderRegion& bbox)
@@ -240,9 +272,9 @@ GlRenderTask* GlRenderer::createPrimitiveTask(RenderTypes type, BlendSource sour
 {
     dstCopyFbo = nullptr;
 
-    if (mBlendMethod == BlendMethod::Normal) return new GlRenderTask(mPrograms[type]);
+    if (mBlendMethod == BlendMethod::Normal) return new GlRenderTask(_programs[type]);
 
-    if (mBlendPool.empty()) mBlendPool.push(new GlRenderTargetPool(surface.w, surface.h));
+    if (mBlendPool.empty()) mBlendPool.push(getGlobalBlendPool(0, surface.w, surface.h));
 #if defined(THORVG_GL_TARGET_GL)
     dstCopyFbo = mBlendPool[0]->getRenderTarget(viewRegion);
 #else  // TODO: create partial buffer when MSAA is disabled
@@ -311,7 +343,7 @@ void GlRenderer::drawPrimitive(GlShape& sdata, const RenderColor& c, RenderUpdat
     task->setVertexColor(c.r / 255.f, c.g / 255.f, c.b / 255.f, a / 255.f);
     task->setViewport(viewRegion);
 
-    auto stencilTask = drawPrimitiveGeometry(mPrograms[RT_Stencil], task, sdata.geometry, &mGpuBuffer, flag, stencilMode, depth, viewMatrix, viewRegion);
+    auto stencilTask = drawPrimitiveGeometry(_programs[RT_Stencil], task, sdata.geometry, &mGpuBuffer, flag, stencilMode, depth, viewMatrix, viewRegion);
     // Keep BlendRegion on the existing solid-shape blend UBO slot.
     bindBlendTarget(task, dstCopyFbo, viewRegion, 2);
 
@@ -369,7 +401,7 @@ void GlRenderer::drawPrimitive(GlShape& sdata, const Fill* fill, RenderUpdateFla
     task->setViewport(viewRegion);
 
     GlStencilMode stencilMode = sdata.geometry.getStencilMode(flag);
-    auto stencilTask = drawPrimitiveGeometry(mPrograms[RT_Stencil], task, sdata.geometry, &mGpuBuffer, flag, stencilMode, depth, viewMatrix, viewRegion);
+    auto stencilTask = drawPrimitiveGeometry(_programs[RT_Stencil], task, sdata.geometry, &mGpuBuffer, flag, stencilMode, depth, viewMatrix, viewRegion);
 
     // transform buffer (inverse fill-space transform)
     float invMat3[GL_MAT3_STD140_SIZE];
@@ -515,7 +547,7 @@ void GlRenderer::drawClip(Array<RenderData>& clips)
             identityReady = true;
         }
 
-        auto clipTask = new GlRenderTask(mPrograms[RT_Stencil]);
+        auto clipTask = new GlRenderTask(_programs[RT_Stencil]);
         clipTask->setDrawDepth(clipDepths[i]);
         clipTask->setViewMatrix(_viewMatrix(sdata->geometry, viewMatrix, flag));
         sdata->geometry.draw(clipTask, &mGpuBuffer, flag);
@@ -527,7 +559,7 @@ void GlRenderer::drawClip(Array<RenderData>& clips)
         auto y = vp.sh() - (bbox.sy() - vp.sy()) - bbox.sh();
         clipTask->setViewport({{x, y}, {x + bbox.sw(), y + bbox.sh()}});
 
-        auto maskTask = new GlRenderTask(mPrograms[RT_Stencil]);
+        auto maskTask = new GlRenderTask(_programs[RT_Stencil]);
 
         maskTask->setDrawDepth(clipDepths[i]);
         maskTask->addVertexLayout(GlVertexLayout{0, 2, 2 * sizeof(float), identityVertexOffset});
@@ -553,7 +585,7 @@ bool GlRenderer::beginComplexBlending(const RenderRegion& vp, RenderRegion bound
 
     if (mBlendMethod == BlendMethod::Normal) return false;
 
-    if (mBlendPool.empty()) mBlendPool.push(new GlRenderTargetPool(surface.w, surface.h));
+    if (mBlendPool.empty()) mBlendPool.push(getGlobalBlendPool(0, surface.w, surface.h));
 
     auto blendFbo = mBlendPool[0]->getRenderTarget(bounds);
 
@@ -570,7 +602,8 @@ void GlRenderer::endBlendingCompose(GlRenderTask* stencilTask)
     auto composeTask = blendPass->endRenderPass<GlComposeTask>(nullptr, currentPass()->getFboId());
 
     const auto& vp = blendPass->getViewport();
-    if (mBlendPool.count < 2) mBlendPool.push(new GlRenderTargetPool(surface.w, surface.h));
+    if (mBlendPool.count < 1) mBlendPool.push(getGlobalBlendPool(0, surface.w, surface.h));
+    if (mBlendPool.count < 2) mBlendPool.push(getGlobalBlendPool(1, surface.w, surface.h));
 #if defined(THORVG_GL_TARGET_GL)
     auto dstCopyFbo = mBlendPool[1]->getRenderTarget(vp);
 #else // TODO: create partial buffer when MSAA is disabled        
@@ -644,7 +677,7 @@ GlProgram* GlRenderer::getBlendProgram(BlendMethod method, BlendSource source)
         case BlendSource::RadialGradient: shaderInd += (uint32_t)RT_ShapeBlend_Radial_Normal; break;
     }
 
-    if (mPrograms[shaderInd]) return mPrograms[shaderInd];
+    if (_programs[shaderInd]) return _programs[shaderInd];
 
     const char* lumHelper = "";
     const char* satHelper = "";
@@ -662,8 +695,8 @@ GlProgram* GlRenderer::getBlendProgram(BlendMethod method, BlendSource source)
         vertShader = BLIT_VERT_SHADER;
         const char* header = (source == BlendSource::Scene) ? BLEND_SCENE_FRAG_HEADER : BLEND_IMAGE_FRAG_HEADER;
         snprintf(fragShader, BLEND_TOTAL_LENGTH, "%s%s%s%s", header, lumHelper, satHelper, shaderFunc[methodInd]);
-        mPrograms[shaderInd] = new GlProgram(vertShader, fragShader);
-        return mPrograms[shaderInd];
+        _programs[shaderInd] = new GlProgram(vertShader, fragShader);
+        return _programs[shaderInd];
     }
 
     vertShader = (source == BlendSource::Solid) ? COLOR_VERT_SHADER : GRADIENT_VERT_SHADER;
@@ -702,8 +735,8 @@ GlProgram* GlRenderer::getBlendProgram(BlendMethod method, BlendSource source)
             break;
     }
 
-    mPrograms[shaderInd] = new GlProgram(vertShader, fragShader);
-    return mPrograms[shaderInd];
+    _programs[shaderInd] = new GlProgram(vertShader, fragShader);
+    return _programs[shaderInd];
 }
 
 
@@ -794,16 +827,16 @@ void GlRenderer::endRenderPass(RenderCompositor* cmp)
 
         GlProgram* program = nullptr;
         switch(cmp->method) {
-            case MaskMethod::Alpha: program = mPrograms[RT_MaskAlpha]; break;
-            case MaskMethod::InvAlpha: program = mPrograms[RT_MaskAlphaInv]; break;
-            case MaskMethod::Luma: program = mPrograms[RT_MaskLuma]; break;
-            case MaskMethod::InvLuma: program = mPrograms[RT_MaskLumaInv]; break;
-            case MaskMethod::Add: program = mPrograms[RT_MaskAdd]; break;
-            case MaskMethod::Subtract: program = mPrograms[RT_MaskSub]; break;
-            case MaskMethod::Intersect: program = mPrograms[RT_MaskIntersect]; break;
-            case MaskMethod::Difference: program = mPrograms[RT_MaskDifference]; break;
-            case MaskMethod::Lighten: program = mPrograms[RT_MaskLighten]; break;
-            case MaskMethod::Darken: program = mPrograms[RT_MaskDarken]; break;
+            case MaskMethod::Alpha: program = _programs[RT_MaskAlpha]; break;
+            case MaskMethod::InvAlpha: program = _programs[RT_MaskAlphaInv]; break;
+            case MaskMethod::Luma: program = _programs[RT_MaskLuma]; break;
+            case MaskMethod::InvLuma: program = _programs[RT_MaskLumaInv]; break;
+            case MaskMethod::Add: program = _programs[RT_MaskAdd]; break;
+            case MaskMethod::Subtract: program = _programs[RT_MaskSub]; break;
+            case MaskMethod::Intersect: program = _programs[RT_MaskIntersect]; break;
+            case MaskMethod::Difference: program = _programs[RT_MaskDifference]; break;
+            case MaskMethod::Lighten: program = _programs[RT_MaskLighten]; break;
+            case MaskMethod::Darken: program = _programs[RT_MaskDarken]; break;
             default: break;
         }
         if (program && !selfPass->isEmpty() && !maskPass->isEmpty()) {
@@ -830,8 +863,8 @@ void GlRenderer::endRenderPass(RenderCompositor* cmp)
     } else if (glCmp->blendMethod != BlendMethod::Normal) {
         auto renderPass = mRenderPassStack.pick();
         if (!renderPass->isEmpty()) {
-            if (mBlendPool.count < 1) mBlendPool.push(new GlRenderTargetPool(surface.w, surface.h));
-            if (mBlendPool.count < 2) mBlendPool.push(new GlRenderTargetPool(surface.w, surface.h));
+            if (mBlendPool.count < 1) mBlendPool.push(getGlobalBlendPool(0, surface.w, surface.h));
+            if (mBlendPool.count < 2) mBlendPool.push(getGlobalBlendPool(1, surface.w, surface.h));
 #if defined(THORVG_GL_TARGET_GL)
             auto dstCopyFbo = mBlendPool[1]->getRenderTarget(renderPass->getViewport());
 #else // TODO: create partial buffer when MSAA is disabled
@@ -869,7 +902,7 @@ void GlRenderer::endRenderPass(RenderCompositor* cmp)
     } else {
         auto renderPass = mRenderPassStack.pick();
         if (!renderPass->isEmpty()) {
-            auto task = renderPass->endRenderPass<GlDrawBlitTask>(mPrograms[RT_Image], currentPass()->getFboId());
+            auto task = renderPass->endRenderPass<GlDrawBlitTask>(_programs[RT_Image], currentPass()->getFboId());
             task->setRenderSize(glCmp->bbox.w(), glCmp->bbox.h());
             prepareCmpTask(task, glCmp->bbox, renderPass->getFboWidth(), renderPass->getFboHeight());
             task->setDrawDepth(currentPass()->nextDrawDepth());
@@ -909,10 +942,9 @@ bool GlRenderer::clear()
 }
 
 
-bool GlRenderer::target(void* display, void* surface, void* context, int32_t id, uint32_t w, uint32_t h, ColorSpace cs)
+bool GlRenderer::target(void* display, void* surface, void* context, int32_t id, uint32_t w, uint32_t h, ColorSpace cs, int msaaSamples)
 {
-    //assume the context zero is invalid
-    if (!context || w == 0 || h == 0) return false;
+    if (w == 0 || h == 0) return false;
 
     if (mContext) {
         currentContext();
@@ -934,7 +966,7 @@ bool GlRenderer::target(void* display, void* surface, void* context, int32_t id,
     auto ret = currentContext();
 
     mRootTarget.viewport = {{0, 0}, {int32_t(this->surface.w), int32_t(this->surface.h)}};
-    mRootTarget.init(this->surface.w, this->surface.h, mTargetFboId);
+    mRootTarget.init(this->surface.w, this->surface.h, mTargetFboId, msaaSamples);
 
     return ret;
 }
@@ -956,7 +988,7 @@ bool GlRenderer::sync()
     GL_CHECK(glEnable(GL_DEPTH_TEST));
     GL_CHECK(glDepthFunc(GL_GREATER));
 
-    auto task = mRenderPassStack.first()->endRenderPass<GlBlitTask>(mPrograms[RT_Blit], mTargetFboId);
+    auto task = mRenderPassStack.first()->endRenderPass<GlBlitTask>(_programs[RT_Blit], mTargetFboId);
 
     prepareBlitTask(task);
 
@@ -1020,7 +1052,7 @@ bool GlRenderer::preRender()
     if (mRootTarget.invalid()) return false;
 
     currentContext();
-    if (mPrograms.empty()) initShaders();
+    if (_programs.empty()) initShaders();
     mRenderPassStack.push(new GlRenderPass(&mRootTarget));
 
     return true;
@@ -1055,7 +1087,7 @@ bool GlRenderer::beginComposite(RenderCompositor* cmp, MaskMethod method, uint8_
     glCmp->blendMethod = mBlendMethod;
 
     uint32_t index = mRenderPassStack.count - 1;
-    if (index >= mComposePool.count) mComposePool.push( new GlRenderTargetPool(surface.w, surface.h));
+    if (index >= mComposePool.count) mComposePool.push(getGlobalComposePool(index, surface.w, surface.h));
     
     if (glCmp->bbox.valid()) mRenderPassStack.push(new GlRenderPass(mComposePool[index]->getRenderTarget(glCmp->bbox)));
     else mRenderPassStack.push(new GlRenderPass(nullptr));
@@ -1081,8 +1113,8 @@ bool GlRenderer::endComposite(RenderCompositor* cmp)
 void GlRenderer::prepare(RenderEffect* effect, const Matrix& transform)
 {
     // we must be sure, that we have intermediate FBOs
-    if (mBlendPool.count < 1) mBlendPool.push(new GlRenderTargetPool(surface.w, surface.h));
-    if (mBlendPool.count < 2) mBlendPool.push(new GlRenderTargetPool(surface.w, surface.h));
+    if (mBlendPool.count < 1) mBlendPool.push(getGlobalBlendPool(0, surface.w, surface.h));
+    if (mBlendPool.count < 2) mBlendPool.push(getGlobalBlendPool(1, surface.w, surface.h));
 
     mEffect.update(effect, transform);
 }
@@ -1148,7 +1180,7 @@ bool GlRenderer::renderImage(void* data)
 
     if (!sdata->clips.empty()) drawClip(sdata->clips);
 
-    auto task = new GlRenderTask(mPrograms[RT_Image]);
+    auto task = new GlRenderTask(_programs[RT_Image]);
     task->setDrawDepth(drawDepth);
     sdata->geometry.draw(task, &mGpuBuffer, RenderUpdateFlag::Image);
 
@@ -1179,7 +1211,7 @@ bool GlRenderer::renderImage(void* data)
     currentPass()->addRenderTask(task);
 
     if (complexBlend) {
-        auto task = new GlRenderTask(mPrograms[RT_Stencil]);
+        auto task = new GlRenderTask(_programs[RT_Stencil]);
         sdata->geometry.draw(task, &mGpuBuffer, RenderUpdateFlag::Image);
         endBlendingCompose(task);
     }
@@ -1239,7 +1271,7 @@ void GlRenderer::dispose(RenderData data)
 {
     auto sdata = static_cast<GlShape*>(data);
     if (!sdata) return;
-    auto ownsTexture = sdata->texId && (sdata->texStamp == mTextures.stamp);
+    auto ownsTexture = sdata->texId && (sdata->texStamp == mTextures.stamp) && sdata->texColorSpace != ColorSpace::TextureRGBA;
     if (ownsTexture) disposeTexture(mTextures.release(sdata->texSource, sdata->texFilter, sdata->texId));
     delete sdata;
 }
@@ -1262,9 +1294,13 @@ RenderData GlRenderer::prepare(RenderSurface* image, RenderData data, const Matr
 
     auto sourceChanged = (sdata->texSource != image) || (sdata->texFilter != filter);
     if (sdata->texId == 0 || sourceChanged || cacheStale) {
-        auto ownsTexture = sdata->texId && (sdata->texStamp == mTextures.stamp);
-        if (ownsTexture) disposeTexture(mTextures.release(sdata->texSource, sdata->texFilter, sdata->texId));
-        sdata->texId = mTextures.retain(image, filter);
+        if (image && image->cs == ColorSpace::TextureRGBA) {
+            sdata->texId = image->textureId;
+        } else {
+            auto ownsTexture = sdata->texId && (sdata->texStamp == mTextures.stamp);
+            if (ownsTexture) disposeTexture(mTextures.release(sdata->texSource, sdata->texFilter, sdata->texId));
+            sdata->texId = mTextures.retain(image, filter);
+        }
         sdata->texSource = image;
         sdata->texFilter = filter;
         sdata->texStamp = mTextures.stamp;
@@ -1399,6 +1435,15 @@ bool GlRenderer::term()
         return false;
     }
 
+    ARRAY_FOREACH(p, _programs) delete(*p);
+    _programs.clear();
+
+    ARRAY_FOREACH(p, _globalComposePool) delete(*p);
+    _globalComposePool.clear();
+
+    ARRAY_FOREACH(p, _globalBlendPool) delete(*p);
+    _globalBlendPool.clear();
+
     glTerm();
 
     _rendererCnt = -1;
@@ -1424,4 +1469,9 @@ GlRenderer* GlRenderer::gen(TVG_UNUSED uint32_t threads, TVG_UNUSED EngineOption
     _rendererMtx.unlock();
 
     return new GlRenderer;
+}
+
+GlProgram *GlRenderer::program(RenderTypes type)
+{
+    return _programs[type];
 }

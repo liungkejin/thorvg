@@ -82,6 +82,9 @@ namespace tvg
         Sfnt,
         Raw,
         Gif,
+#if defined(THORVG_GL_TARGET_GL) || defined(THORVG_GL_TARGET_GLES)
+        Texture,
+#endif
         Unknown
     };
 
